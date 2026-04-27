@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(brew list *)",
+      "Bash(brew install *)",
+      "Bash(./bug_trapper --print \"hello world\")",
+      "Bash(system_profiler SPUSBDataType)",
+      "Bash(ioreg -p IOUSB -l -w 0)",
+      "Bash(awk '/idProduct.*22337/,/^  \\\\| $/')",
+      "Bash(lpstat -p)",
+      "Bash(lpstat -a)",
+      "Bash(awk '/\"Virtual PRN\"/,/^$/')",
+      "Bash(system_profiler SPUSBDataType -detailLevel full)",
+      "Bash(awk '/Virtual PRN|Product ID: 0x5741/,/^$/')",
+      "Bash(sudo -n ./bug_trapper --print \"hello world\")"
+    ]
+  }
+}
