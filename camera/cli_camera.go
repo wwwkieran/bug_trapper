@@ -15,9 +15,10 @@ import (
 
 // CLICamera captures images using platform-specific CLI tools.
 // macOS: imagesnap (brew install imagesnap)
-// Linux: fswebcam (sudo apt install fswebcam)
+// Linux: rpicam-jpeg / libcamera-jpeg (Raspberry Pi) or fswebcam (USB webcam)
 type CLICamera struct {
 	tmpDir string
+	tool   string
 }
 
 func NewCLICamera() *CLICamera {
@@ -25,17 +26,11 @@ func NewCLICamera() *CLICamera {
 }
 
 func (c *CLICamera) Open() error {
-	tool := captureTool()
-	if _, err := exec.LookPath(tool); err != nil {
-		switch runtime.GOOS {
-		case "darwin":
-			return fmt.Errorf("%s not found; install with: brew install imagesnap", tool)
-		case "linux":
-			return fmt.Errorf("%s not found; install with: sudo apt install fswebcam", tool)
-		default:
-			return fmt.Errorf("%s not found", tool)
-		}
+	tool, err := findCaptureTool()
+	if err != nil {
+		return err
 	}
+	c.tool = tool
 	tmpDir, err := os.MkdirTemp("", "bugtrapper-")
 	if err != nil {
 		return err
@@ -47,18 +42,17 @@ func (c *CLICamera) Open() error {
 func (c *CLICamera) Capture() (image.Image, error) {
 	outPath := filepath.Join(c.tmpDir, "capture.jpg")
 
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("imagesnap", "-w", "1", outPath)
-	case "linux":
-		cmd = exec.Command("fswebcam", "-r", "1280x720", "--no-banner", outPath)
-	default:
-		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	cmd, err := buildCaptureCmd(c.tool, outPath)
+	if err != nil {
+		return nil, err
 	}
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("capture failed: %s: %w", string(out), err)
+	}
+
+	if _, err := os.Stat(outPath); err != nil {
+		return nil, fmt.Errorf("capture produced no file at %s: %w", outPath, err)
 	}
 
 	f, err := os.Open(outPath)
@@ -81,13 +75,45 @@ func (c *CLICamera) Close() error {
 	return nil
 }
 
-func captureTool() string {
+// findCaptureTool returns the first available capture tool for this platform.
+// On Linux, it prefers rpicam-jpeg / libcamera-jpeg (Raspberry Pi camera stack)
+// before falling back to fswebcam for USB webcams.
+func findCaptureTool() (string, error) {
+	var candidates []string
 	switch runtime.GOOS {
 	case "darwin":
-		return "imagesnap"
+		candidates = []string{"imagesnap"}
 	case "linux":
-		return "fswebcam"
+		candidates = []string{"rpicam-jpeg", "libcamera-jpeg", "fswebcam"}
 	default:
-		return "imagesnap"
+		return "", fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	for _, tool := range candidates {
+		if _, err := exec.LookPath(tool); err == nil {
+			return tool, nil
+		}
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		return "", fmt.Errorf("imagesnap not found; install with: brew install imagesnap")
+	case "linux":
+		return "", fmt.Errorf("no capture tool found; install rpicam-apps (Raspberry Pi camera) or fswebcam (USB webcam)")
+	default:
+		return "", fmt.Errorf("no capture tool found for %s", runtime.GOOS)
+	}
+}
+
+func buildCaptureCmd(tool, outPath string) (*exec.Cmd, error) {
+	switch tool {
+	case "imagesnap":
+		return exec.Command("imagesnap", "-w", "1", outPath), nil
+	case "rpicam-jpeg", "libcamera-jpeg":
+		return exec.Command(tool, "-o", outPath, "--width", "1280", "--height", "720", "-n"), nil
+	case "fswebcam":
+		return exec.Command("fswebcam", "-r", "1280x720", "--no-banner", outPath), nil
+	default:
+		return nil, fmt.Errorf("unknown capture tool: %s", tool)
 	}
 }
