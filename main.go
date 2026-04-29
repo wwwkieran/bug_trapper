@@ -3,30 +3,36 @@ package main
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
 	"image"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
 
-	"bug_trapper/ascii"
 	"bug_trapper/camera"
 	"bug_trapper/hardware"
 	"bug_trapper/identifier"
 	"bug_trapper/printer"
-	"bug_trapper/receipt"
 	"bug_trapper/store"
+	"bug_trapper/svgreceipt"
 )
+
+//go:embed assets/card.svg
+var defaultTemplate []byte
+
+const printerWidthDots = 384
 
 func main() {
 	dbPath := flag.String("db-path", "sightings.db", "Path to SQLite database")
-	output := flag.String("output", "receipt.txt", "Output receipt file path")
+	output := flag.String("output", "receipt.png", "Path to dump the rendered receipt PNG (for debugging)")
+	template := flag.String("template", "", "Path to SVG receipt template (default: built-in)")
 	preview := flag.Bool("preview", false, "Show live camera preview window (requires: go build -tags gocv); implies --no-loop")
 	printText := flag.String("print", "", "Print this string to the thermal printer and exit")
 	noLoop := flag.Bool("no-loop", false, "Run a single iteration and exit (default: loop forever)")
@@ -55,11 +61,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	tmpl, err := loadTemplate(*template)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	oneShot := *noLoop || *preview
-	if err := run(*dbPath, *output, *preview, oneShot, *noHardware); err != nil {
+	if err := run(*dbPath, *output, tmpl, *preview, oneShot, *noHardware); err != nil {
 		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func loadTemplate(path string) ([]byte, error) {
+	if path == "" {
+		return defaultTemplate, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading template %s: %w", path, err)
+	}
+	return b, nil
 }
 
 func printString(text string) error {
@@ -71,7 +94,7 @@ func printString(text string) error {
 	return p.Print(text)
 }
 
-func run(dbPath, output string, wantPreview, oneShot, noHW bool) error {
+func run(dbPath, output string, template []byte, wantPreview, oneShot, noHW bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -104,7 +127,7 @@ func run(dbPath, output string, wantPreview, oneShot, noHW bool) error {
 		if err := waitTrigger(ctx, hw.Button); err != nil {
 			return nil
 		}
-		if err := captureAndPrint(ctx, cam, hw, ident, db, output, wantPreview); err != nil {
+		if err := captureAndPrint(ctx, cam, hw, ident, db, output, template, wantPreview); err != nil {
 			fmt.Fprintf(os.Stderr, "iteration error: %v\n", err)
 			hw.Matrix.FlashX(2 * time.Second)
 		}
@@ -128,6 +151,7 @@ func captureAndPrint(
 	ident *identifier.OpenAIIdentifier,
 	db *store.SQLiteStore,
 	output string,
+	template []byte,
 	wantPreview bool,
 ) error {
 	photo, err := capturePhoto(cam, hw, wantPreview)
@@ -153,12 +177,6 @@ func captureAndPrint(
 	if err != nil {
 		return fmt.Errorf("downloading illustration: %w", err)
 	}
-	step(4, "Converting to ASCII art...")
-	conv := &ascii.Converter{}
-	art, err := conv.Convert(illustration, receipt.ReceiptWidth)
-	if err != nil {
-		return fmt.Errorf("converting to ASCII: %w", err)
-	}
 	done()
 
 	step(5, "Recording sighting in database...")
@@ -171,33 +189,28 @@ func captureAndPrint(
 		fmt.Printf("    Seen %d times before!\n", count)
 	}
 
-	step(6, "Formatting receipt...")
-	receiptData := receipt.ReceiptData{
-		OrganismName:  result.Name,
-		Description:   result.Description,
-		ASCIIArt:      art,
-		SightingCount: count,
-		Timestamp:     time.Now(),
+	step(6, "Rendering receipt SVG...")
+	vars := map[string]string{
+		"name":        result.Name,
+		"description": result.Description,
+		"N":           fmt.Sprintf("%d", count),
+		"date":        formatDate(time.Now()),
 	}
-	formatted := receipt.Format(receiptData)
+	rendered, err := svgreceipt.Render(template, vars, illustration, printerWidthDots)
+	if err != nil {
+		return fmt.Errorf("rendering receipt: %w", err)
+	}
 	done()
 
-	step(7, "Saving receipt...")
-	if err := os.WriteFile(output, []byte(formatted), 0644); err != nil {
+	step(7, "Saving receipt PNG...")
+	if err := writePNG(output, rendered); err != nil {
 		return fmt.Errorf("writing receipt: %w", err)
 	}
 	done()
-
-	fmt.Println()
-	fmt.Printf("Receipt saved to %s\n", output)
-	fmt.Println()
-	fmt.Println(formatted)
+	fmt.Printf("    Receipt saved to %s\n", output)
 
 	step(8, "Sending to thermal printer...")
-	header := receipt.FormatHeader()
-	description := receipt.FormatDescription(result.Description)
-	footer := receipt.FormatBottom(receiptData)
-	if err := printReceipt(header, result.Name, description, illustration, footer); err != nil {
+	if err := printImage(rendered); err != nil {
 		if errors.Is(err, printer.ErrDeviceNotFound) {
 			fmt.Println(" skipped (printer not connected).")
 		} else {
@@ -208,6 +221,36 @@ func captureAndPrint(
 	}
 
 	return nil
+}
+
+// formatDate renders t like "April 29th, 2026" with English ordinal suffix.
+func formatDate(t time.Time) string {
+	day := t.Day()
+	return fmt.Sprintf("%s %d%s, %d", t.Month().String(), day, ordinalSuffix(day), t.Year())
+}
+
+func ordinalSuffix(n int) string {
+	if n%100 >= 11 && n%100 <= 13 {
+		return "th"
+	}
+	switch n % 10 {
+	case 1:
+		return "st"
+	case 2:
+		return "nd"
+	case 3:
+		return "rd"
+	}
+	return "th"
+}
+
+func writePNG(path string, img image.Image) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
 }
 
 func capturePhoto(cam camera.Camera, hw *hardware.Devices, wantPreview bool) (image.Image, error) {
@@ -373,13 +416,13 @@ func runHWTest(target string, noHW bool) error {
 	}
 }
 
-func printReceipt(header, name, description string, img image.Image, footer string) error {
+func printImage(img image.Image) error {
 	p, err := printer.NewUSBPrinter()
 	if err != nil {
 		return err
 	}
 	defer p.Close()
-	return p.PrintReceipt(header, name, description, img, footer)
+	return p.PrintImage(img)
 }
 
 func step(n int, msg string) {

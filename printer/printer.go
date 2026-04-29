@@ -20,19 +20,17 @@ const (
 )
 
 var (
-	cmdInit     = []byte{0x1B, 0x40}
-	cmdCut      = []byte{0x1D, 0x56, 0x00}
-	cmdSize2x   = []byte{0x1D, 0x21, 0x11} // GS ! n — 2x width, 2x height
-	cmdSizeNorm = []byte{0x1D, 0x21, 0x00} // GS ! 0 — normal size
-	cmdCenter   = []byte{0x1B, 0x61, 0x01} // ESC a 1 — center align
-	cmdLeft     = []byte{0x1B, 0x61, 0x00} // ESC a 0 — left align
+	cmdInit   = []byte{0x1B, 0x40}
+	cmdCut    = []byte{0x1D, 0x56, 0x00}
+	cmdCenter = []byte{0x1B, 0x61, 0x01} // ESC a 1 — center align
+	cmdLeft   = []byte{0x1B, 0x61, 0x00} // ESC a 0 — left align
 )
 
 var ErrDeviceNotFound = errors.New("printer: USB device not found")
 
 type Printer interface {
 	Print(text string) error
-	PrintReceipt(header, name, description string, img image.Image, footer string) error
+	PrintImage(img image.Image) error
 	Close() error
 }
 
@@ -108,28 +106,16 @@ func (p *USBPrinter) Print(text string) error {
 	return p.write(data)
 }
 
-// PrintReceipt prints a composed receipt: header, large-font organism name,
-// description, raster image, then footer. Paper is fed and cut at the end.
-func (p *USBPrinter) PrintReceipt(header, name, description string, img image.Image, footer string) error {
+// PrintImage prints a single raster image (the entire receipt is one
+// pre-rendered bitmap) centered on the page, then feeds and cuts the paper.
+func (p *USBPrinter) PrintImage(img image.Image) error {
 	raster := encodeRaster(img)
 
 	var buf []byte
 	buf = append(buf, cmdInit...)
-	buf = append(buf, []byte(header)...)
-
-	// Big, centered name
-	buf = append(buf, cmdCenter...)
-	buf = append(buf, cmdSize2x...)
-	buf = append(buf, []byte(name)...)
-	buf = append(buf, '\n')
-	buf = append(buf, cmdSizeNorm...)
-	buf = append(buf, cmdLeft...)
-
-	buf = append(buf, []byte(description)...)
 	buf = append(buf, cmdCenter...)
 	buf = append(buf, raster...)
 	buf = append(buf, cmdLeft...)
-	buf = append(buf, []byte(footer)...)
 	buf = append(buf, []byte(cutFeed)...)
 	buf = append(buf, cmdCut...)
 	return p.write(buf)
@@ -167,6 +153,6 @@ func (p *USBPrinter) Close() error {
 
 type NoopPrinter struct{}
 
-func (NoopPrinter) Print(string) error                                             { return nil }
-func (NoopPrinter) PrintReceipt(string, string, string, image.Image, string) error { return nil }
-func (NoopPrinter) Close() error                                                   { return nil }
+func (NoopPrinter) Print(string) error           { return nil }
+func (NoopPrinter) PrintImage(image.Image) error { return nil }
+func (NoopPrinter) Close() error                 { return nil }

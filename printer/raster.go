@@ -10,33 +10,31 @@ const (
 	// PrinterDotsWide is the print head width in dots for a 58mm thermal
 	// printer (384 dots = 48 bytes per row).
 	PrinterDotsWide = 384
-	// MaxImageRows caps image height to keep receipts compact (roughly 1.5in
-	// of print at 203 DPI).
-	MaxImageRows = 300
+	// chunkRows is the per-GS-v-0-command height limit. The printer
+	// concatenates back-to-back raster commands seamlessly, so taller images
+	// are split into chunks of this height.
+	chunkRows = 256
 )
 
-// encodeRaster scales img to fit within PrinterDotsWide × MaxImageRows,
-// Floyd-Steinberg-dithers it to 1-bit, and returns the ESC/POS GS v 0 command
-// bytes ready to send to the printer.
+// encodeRaster scales img to fit PrinterDotsWide wide (preserving aspect
+// ratio), Floyd-Steinberg-dithers it to 1-bit, and returns the ESC/POS
+// GS v 0 command bytes — split into chunks of chunkRows so that arbitrarily
+// tall images print without per-command height limits.
 func encodeRaster(img image.Image) []byte {
 	scaled := scaleToPrinter(img)
 	bits := ditherFloydSteinberg(scaled)
-	return packRaster(bits)
+	return packRasterChunks(bits, chunkRows)
 }
 
 func scaleToPrinter(img image.Image) *image.Gray {
 	bounds := img.Bounds()
 	srcW, srcH := bounds.Dx(), bounds.Dy()
+	if srcW == 0 || srcH == 0 {
+		return image.NewGray(image.Rect(0, 0, 0, 0))
+	}
 
 	dstW := PrinterDotsWide
 	dstH := srcH * dstW / srcW
-	if dstH > MaxImageRows {
-		dstH = MaxImageRows
-		dstW = srcW * dstH / srcH
-		if dstW > PrinterDotsWide {
-			dstW = PrinterDotsWide
-		}
-	}
 
 	gray := image.NewGray(image.Rect(0, 0, dstW, dstH))
 	draw.CatmullRom.Scale(gray, gray.Bounds(), img, bounds, draw.Over, nil)
@@ -82,6 +80,23 @@ func ditherFloydSteinberg(src *image.Gray) [][]bool {
 				}
 			}
 		}
+	}
+	return out
+}
+
+// packRasterChunks emits one GS v 0 command per chunk of up to maxRows rows.
+// The printer prints them back-to-back with no visible seam.
+func packRasterChunks(bits [][]bool, maxRows int) []byte {
+	if maxRows <= 0 {
+		return packRaster(bits)
+	}
+	var out []byte
+	for y := 0; y < len(bits); y += maxRows {
+		end := y + maxRows
+		if end > len(bits) {
+			end = len(bits)
+		}
+		out = append(out, packRaster(bits[y:end])...)
 	}
 	return out
 }
