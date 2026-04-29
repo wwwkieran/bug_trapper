@@ -22,7 +22,12 @@ HUIT_API_KEY=your_key ./bug_trapper
 ./bug_trapper --db-path my.db  # custom database path
 ./bug_trapper --output out.txt # custom output file
 ./bug_trapper --print "hello"  # print string to thermal printer and exit
+./bug_trapper --no-loop        # one-shot mode (default is kiosk loop)
+./bug_trapper --no-hardware    # skip GPIO init even on Pi build
+./bug_trapper --hw-test all    # hardware self-test: button|ring|matrix|all
 ```
+
+By default the program runs as a kiosk loop: wait for button-or-ENTER, capture, identify, print, repeat. Press Ctrl+C to exit.
 
 ## Test
 
@@ -46,6 +51,7 @@ bug_trapper/
   identifier/        # OpenAI GPT-4o vision + DALL-E integration
   camera/            # Webcam capture (imagesnap default, GoCV with -tags gocv)
   printer/           # 58mm thermal printer driver (USB via gousb, ESC/POS)
+  hardware/          # Pi GPIO peripherals (button, WS2812 ring, MAX7219 matrix); -tags pi
 ```
 
 ## Architecture
@@ -63,3 +69,66 @@ bug_trapper/
 ## Thermal Printer
 
 Target: Micro Thermal Printer 58mm (TTL/RS232), 32 characters per line at default 12x24 font.
+
+## Raspberry Pi (Pi Zero 2 W)
+
+Build with `-tags pi` to enable GPIO peripherals: a button (capture trigger), a 12-LED WS2812B ring (scene light), and a MAX7219 8x8 matrix (working indicator).
+
+### Wiring
+
+| Device         | Function | Pi pin | BCM     | Notes |
+|----------------|----------|--------|---------|-------|
+| Push button    | Signal   | 36     | GPIO16  | active-low, internal pull-up |
+| Push button    | GND      | 20     | —       | |
+| WS2812B ring   | Data     | 32     | GPIO12  | PWM0 |
+| WS2812B ring   | 5V       | 2      | —       | |
+| WS2812B ring   | GND      | 6      | —       | |
+| MAX7219 matrix | DIN      | 38     | GPIO20  | SPI1 MOSI |
+| MAX7219 matrix | CLK      | 40     | GPIO21  | SPI1 SCLK |
+| MAX7219 matrix | CS       | 12     | GPIO18  | SPI1 CE0 |
+| MAX7219 matrix | 5V       | 4      | —       | |
+| MAX7219 matrix | GND      | 14     | —       | |
+
+### Pi setup (one-time)
+
+```bash
+sudo raspi-config nonint do_spi 0    # enable SPI
+
+# Edit /boot/firmware/config.txt and add:
+#   dtoverlay=spi1-1cs   # exposes /dev/spidev1.0
+#   dtparam=audio=off    # frees PWM block for ws281x; without this the ring won't work
+sudo nano /boot/firmware/config.txt
+sudo reboot
+
+sudo apt install -y build-essential scons libusb-1.0-0-dev rpicam-apps
+sudo usermod -aG gpio,spi $USER && newgrp gpio
+```
+
+Verify after reboot: `ls /dev/spidev*` shows both `/dev/spidev0.0` and `/dev/spidev1.0`; `lsmod | grep snd_bcm2835` returns nothing.
+
+### Build & run on the Pi
+
+```bash
+go build -tags pi -o bug_trapper .
+sudo HUIT_API_KEY=... ./bug_trapper          # sudo required for ws281x DMA
+sudo ./bug_trapper --hw-test all             # button + ring + matrix self-test
+```
+
+### Cross-compile from Mac (optional)
+
+Requires zig as the C compiler (rpi-ws281x-go uses cgo).
+
+```bash
+# 64-bit Pi OS (default for Zero 2 W):
+CGO_ENABLED=1 CC="zig cc -target aarch64-linux-gnu" \
+  GOOS=linux GOARCH=arm64 go build -tags pi -o bug_trapper .
+
+# 32-bit Pi OS:
+CGO_ENABLED=1 CC="zig cc -target arm-linux-gnueabihf" \
+  GOOS=linux GOARCH=arm GOARM=7 go build -tags pi -o bug_trapper .
+```
+
+### Notes
+
+- Ring brightness defaults to 64 (~25%) to stay within the Zero 2 W's 5V budget. For full brightness, power the strip from a separate 5V supply with shared ground.
+- If a peripheral fails to initialize (not connected, wiring fault), startup logs `skipped (X not connected)` and the rest of the loop keeps working.

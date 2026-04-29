@@ -11,10 +11,13 @@ import (
 	_ "image/png"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync"
 	"time"
 
 	"bug_trapper/ascii"
 	"bug_trapper/camera"
+	"bug_trapper/hardware"
 	"bug_trapper/identifier"
 	"bug_trapper/printer"
 	"bug_trapper/receipt"
@@ -24,12 +27,23 @@ import (
 func main() {
 	dbPath := flag.String("db-path", "sightings.db", "Path to SQLite database")
 	output := flag.String("output", "receipt.txt", "Output receipt file path")
-	preview := flag.Bool("preview", false, "Show live camera preview window (requires: go build -tags gocv)")
+	preview := flag.Bool("preview", false, "Show live camera preview window (requires: go build -tags gocv); implies --no-loop")
 	printText := flag.String("print", "", "Print this string to the thermal printer and exit")
+	noLoop := flag.Bool("no-loop", false, "Run a single iteration and exit (default: loop forever)")
+	noHardware := flag.Bool("no-hardware", false, "Skip hardware (button/ring/matrix) initialization even on Pi build")
+	hwTest := flag.String("hw-test", "", "Run a hardware self-test and exit: button|ring|matrix|all")
 	flag.Parse()
 
 	if *printText != "" {
 		if err := printString(*printText); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *hwTest != "" {
+		if err := runHWTest(*hwTest, *noHardware); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -41,7 +55,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(*dbPath, *output, *preview); err != nil {
+	oneShot := *noLoop || *preview
+	if err := run(*dbPath, *output, *preview, oneShot, *noHardware); err != nil {
 		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
 		os.Exit(1)
 	}
@@ -56,11 +71,11 @@ func printString(text string) error {
 	return p.Print(text)
 }
 
-func run(dbPath, output string, wantPreview bool) error {
-	ctx := context.Background()
+func run(dbPath, output string, wantPreview, oneShot, noHW bool) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
 
-	// --- Step 1: Open camera ---
-	step(1, 7, "Opening camera...")
+	step(1, "Opening camera...")
 	cam := camera.NewDefaultCamera()
 	if err := cam.Open(); err != nil {
 		return fmt.Errorf("opening camera: %w", err)
@@ -68,99 +83,77 @@ func run(dbPath, output string, wantPreview bool) error {
 	defer cam.Close()
 	done()
 
-	// --- Step 2: Preview (if supported) and capture ---
-	var photo image.Image
-
-	if wantPreview {
-		if !camera.SupportsPreview() {
-			fmt.Println("    Preview not available in this build.")
-			fmt.Println("    Rebuild with: go build -tags gocv -o bug_trapper .")
-			fmt.Println("    (requires: brew install opencv)")
-			fmt.Println()
-			fmt.Println("    Falling back to direct capture...")
-		} else if previewCam, ok := cam.(camera.PreviewCamera); ok {
-			step(2, 7, "Showing camera preview...")
-			fmt.Println()
-			fmt.Println("    Camera preview window is open.")
-			fmt.Println("    Compose your shot, then press ENTER here to capture.")
-			fmt.Println()
-
-			if err := previewCam.ShowPreview(); err != nil {
-				return fmt.Errorf("opening preview: %w", err)
-			}
-
-			// Run preview loop in background, capture on Enter
-			capturedCh := make(chan struct{})
-			go func() {
-				reader := bufio.NewReader(os.Stdin)
-				fmt.Print("    Press ENTER to take photo > ")
-				reader.ReadString('\n')
-				close(capturedCh)
-			}()
-
-			// Keep updating preview until user presses Enter
-		previewLoop:
-			for {
-				select {
-				case <-capturedCh:
-					break previewLoop
-				default:
-					if !previewCam.UpdatePreview() {
-						break previewLoop
-					}
-				}
-			}
-
-			previewCam.StopPreview()
-
-			step(2, 7, "Capturing photo...")
-			var err error
-			photo, err = cam.Capture()
-			if err != nil {
-				return fmt.Errorf("capturing photo: %w", err)
-			}
-			done()
-		}
+	hw, err := openHardware(noHW)
+	if err != nil {
+		return fmt.Errorf("opening hardware: %w", err)
 	}
+	defer hw.Close()
 
-	// If no preview or preview not used, do simple capture
-	if photo == nil {
-		step(2, 7, "Ready to capture!")
-		fmt.Println()
-		fmt.Print("    Press ENTER to take a photo > ")
-		reader := bufio.NewReader(os.Stdin)
-		reader.ReadString('\n')
-
-		step(2, 7, "Capturing photo...")
-		var err error
-		photo, err = cam.Capture()
-		if err != nil {
-			return fmt.Errorf("capturing photo: %w", err)
-		}
-		done()
+	db, err := store.NewSQLiteStore(dbPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
 	}
+	defer db.Close()
 
-	// --- Step 3: Identify organism ---
-	step(3, 7, "Identifying organism via OpenAI... (this may take a moment)")
-	fmt.Println()
 	ident := &identifier.OpenAIIdentifier{
 		APIKey:  os.Getenv("HUIT_API_KEY"),
 		BaseURL: "https://go.apis.huit.harvard.edu/ais-openai-direct/v1",
 	}
+
+	for {
+		if err := waitTrigger(ctx, hw.Button); err != nil {
+			return nil
+		}
+		if err := captureAndPrint(ctx, cam, hw, ident, db, output, wantPreview); err != nil {
+			fmt.Fprintf(os.Stderr, "iteration error: %v\n", err)
+			hw.Matrix.FlashX(2 * time.Second)
+		}
+		if oneShot {
+			return nil
+		}
+	}
+}
+
+func openHardware(noHW bool) (*hardware.Devices, error) {
+	if noHW {
+		return hardware.NewNoOp(), nil
+	}
+	return hardware.New()
+}
+
+func captureAndPrint(
+	ctx context.Context,
+	cam camera.Camera,
+	hw *hardware.Devices,
+	ident *identifier.OpenAIIdentifier,
+	db *store.SQLiteStore,
+	output string,
+	wantPreview bool,
+) error {
+	photo, err := capturePhoto(cam, hw, wantPreview)
+	if err != nil {
+		return fmt.Errorf("capturing photo: %w", err)
+	}
+
+	chaseCtx, chaseCancel := context.WithCancel(ctx)
+	defer func() { chaseCancel(); hw.Matrix.Stop() }()
+	hw.Matrix.StartChase(chaseCtx)
+
+	step(3, "Identifying organism via OpenAI... (this may take a moment)")
+	fmt.Println()
 	result, err := ident.Identify(ctx, photo)
 	if err != nil {
 		return fmt.Errorf("identifying organism: %w", err)
 	}
 	fmt.Printf("    Found: %s\n", result.Name)
 
-	// --- Step 4: Download and convert illustration ---
-	step(4, 7, "Downloading illustration...")
+	step(4, "Downloading illustration...")
 	fmt.Println()
 	illustration, err := downloadImage(result.IllustrationURL)
 	if err != nil {
 		return fmt.Errorf("downloading illustration: %w", err)
 	}
-	step(4, 7, "Converting to ASCII art...")
+	step(4, "Converting to ASCII art...")
 	conv := &ascii.Converter{}
 	art, err := conv.Convert(illustration, receipt.ReceiptWidth)
 	if err != nil {
@@ -168,13 +161,7 @@ func run(dbPath, output string, wantPreview bool) error {
 	}
 	done()
 
-	// --- Step 5: Record sighting ---
-	step(5, 7, "Recording sighting in database...")
-	db, err := store.NewSQLiteStore(dbPath)
-	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
-	}
-	defer db.Close()
+	step(5, "Recording sighting in database...")
 	count, err := db.RecordSighting(ctx, result.Name)
 	if err != nil {
 		return fmt.Errorf("recording sighting: %w", err)
@@ -184,8 +171,7 @@ func run(dbPath, output string, wantPreview bool) error {
 		fmt.Printf("    Seen %d times before!\n", count)
 	}
 
-	// --- Step 6: Format receipt ---
-	step(6, 8, "Formatting receipt...")
+	step(6, "Formatting receipt...")
 	receiptData := receipt.ReceiptData{
 		OrganismName:  result.Name,
 		Description:   result.Description,
@@ -196,8 +182,7 @@ func run(dbPath, output string, wantPreview bool) error {
 	formatted := receipt.Format(receiptData)
 	done()
 
-	// --- Step 7: Save receipt ---
-	step(7, 8, "Saving receipt...")
+	step(7, "Saving receipt...")
 	if err := os.WriteFile(output, []byte(formatted), 0644); err != nil {
 		return fmt.Errorf("writing receipt: %w", err)
 	}
@@ -208,8 +193,7 @@ func run(dbPath, output string, wantPreview bool) error {
 	fmt.Println()
 	fmt.Println(formatted)
 
-	// --- Step 8: Print to thermal printer ---
-	step(8, 8, "Sending to thermal printer...")
+	step(8, "Sending to thermal printer...")
 	header := receipt.FormatHeader()
 	description := receipt.FormatDescription(result.Description)
 	footer := receipt.FormatBottom(receiptData)
@@ -226,6 +210,169 @@ func run(dbPath, output string, wantPreview bool) error {
 	return nil
 }
 
+func capturePhoto(cam camera.Camera, hw *hardware.Devices, wantPreview bool) (image.Image, error) {
+	if wantPreview {
+		if !camera.SupportsPreview() {
+			fmt.Println("    Preview not available in this build.")
+			fmt.Println("    Rebuild with: go build -tags gocv -o bug_trapper .")
+			fmt.Println("    (requires: brew install opencv)")
+			fmt.Println()
+			fmt.Println("    Falling back to direct capture...")
+		} else if previewCam, ok := cam.(camera.PreviewCamera); ok {
+			return capturePhotoWithPreview(previewCam, hw)
+		}
+	}
+
+	step(2, "Capturing photo...")
+	_ = hw.Ring.On(hardware.White)
+	photo, err := cam.Capture()
+	_ = hw.Ring.Off()
+	if err != nil {
+		return nil, err
+	}
+	done()
+	return photo, nil
+}
+
+func capturePhotoWithPreview(previewCam camera.PreviewCamera, hw *hardware.Devices) (image.Image, error) {
+	step(2, "Showing camera preview...")
+	fmt.Println()
+	fmt.Println("    Camera preview window is open.")
+	fmt.Println("    Compose your shot, then press ENTER here to capture.")
+	fmt.Println()
+
+	if err := previewCam.ShowPreview(); err != nil {
+		return nil, fmt.Errorf("opening preview: %w", err)
+	}
+
+	capturedCh := make(chan struct{})
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("    Press ENTER to take photo > ")
+		reader.ReadString('\n')
+		close(capturedCh)
+	}()
+
+previewLoop:
+	for {
+		select {
+		case <-capturedCh:
+			break previewLoop
+		default:
+			if !previewCam.UpdatePreview() {
+				break previewLoop
+			}
+		}
+	}
+
+	previewCam.StopPreview()
+
+	step(2, "Capturing photo...")
+	_ = hw.Ring.On(hardware.White)
+	photo, err := previewCam.Capture()
+	_ = hw.Ring.Off()
+	if err != nil {
+		return nil, err
+	}
+	done()
+	return photo, nil
+}
+
+var (
+	stdinLines = make(chan struct{}, 1)
+	stdinOnce  sync.Once
+)
+
+func ensureStdinPump() {
+	stdinOnce.Do(func() {
+		go func() {
+			r := bufio.NewReader(os.Stdin)
+			for {
+				if _, err := r.ReadString('\n'); err != nil {
+					return
+				}
+				select {
+				case stdinLines <- struct{}{}:
+				default:
+				}
+			}
+		}()
+	})
+}
+
+func waitTrigger(ctx context.Context, btn hardware.Button) error {
+	ensureStdinPump()
+	fmt.Println()
+	fmt.Println("    Press button or ENTER to capture (Ctrl+C to quit)...")
+
+	btnCtx, btnCancel := context.WithCancel(ctx)
+	defer btnCancel()
+	btnTrig := make(chan struct{}, 1)
+	go func() {
+		if err := btn.Wait(btnCtx); err == nil {
+			select {
+			case btnTrig <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	select {
+	case <-stdinLines:
+		return nil
+	case <-btnTrig:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func runHWTest(target string, noHW bool) error {
+	hw, err := openHardware(noHW)
+	if err != nil {
+		return err
+	}
+	defer hw.Close()
+
+	switch target {
+	case "ring":
+		fmt.Println("Ring: white for 1s")
+		if err := hw.Ring.On(hardware.White); err != nil {
+			return err
+		}
+		time.Sleep(1 * time.Second)
+		return hw.Ring.Off()
+	case "matrix":
+		fmt.Println("Matrix: 3s edge chase, then 1s X flash")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		hw.Matrix.StartChase(ctx)
+		<-ctx.Done()
+		cancel()
+		hw.Matrix.Stop()
+		hw.Matrix.FlashX(1 * time.Second)
+		return nil
+	case "button":
+		fmt.Println("Button: press within 10s")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := hw.Button.Wait(ctx); err != nil {
+			return fmt.Errorf("button wait: %w", err)
+		}
+		fmt.Println("    detected")
+		return nil
+	case "all":
+		for _, t := range []string{"ring", "matrix", "button"} {
+			fmt.Printf("--- %s ---\n", t)
+			if err := runHWTest(t, noHW); err != nil {
+				fmt.Fprintf(os.Stderr, "    %s failed: %v\n", t, err)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown --hw-test target %q (want button|ring|matrix|all)", target)
+	}
+}
+
 func printReceipt(header, name, description string, img image.Image, footer string) error {
 	p, err := printer.NewUSBPrinter()
 	if err != nil {
@@ -235,8 +382,8 @@ func printReceipt(header, name, description string, img image.Image, footer stri
 	return p.PrintReceipt(header, name, description, img, footer)
 }
 
-func step(n, total int, msg string) {
-	fmt.Printf("[%d/%d] %s", n, total, msg)
+func step(n int, msg string) {
+	fmt.Printf("[%d/8] %s", n, msg)
 }
 
 func done() {
@@ -260,4 +407,3 @@ func downloadImage(url string) (image.Image, error) {
 	}
 	return img, nil
 }
-
