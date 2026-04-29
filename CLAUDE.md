@@ -102,9 +102,21 @@ sudo reboot
 
 sudo apt install -y build-essential scons libusb-1.0-0-dev rpicam-apps
 sudo usermod -aG gpio,spi $USER && newgrp gpio
+
+# Build and install the rpi_ws281x C library (provides ws2811.h for cgo).
+# rpi-ws281x-go is just a wrapper; the C library must be installed first.
+git clone https://github.com/jgarff/rpi_ws281x.git ~/rpi_ws281x
+cd ~/rpi_ws281x
+command -v scons >/dev/null || sudo apt install -y scons   # in case the apt install above missed it
+scons
+ls libws2811.a                                             # must exist before continuing
+sudo cp libws2811.a /usr/local/lib/
+sudo cp *.h /usr/local/include/
+sudo ldconfig
+cd -
 ```
 
-Verify after reboot: `ls /dev/spidev*` shows both `/dev/spidev0.0` and `/dev/spidev1.0`; `lsmod | grep snd_bcm2835` returns nothing.
+Verify after reboot: `ls /dev/spidev*` shows both `/dev/spidev0.0` and `/dev/spidev1.0`; `lsmod | grep snd_bcm2835` returns nothing. Also verify: `ls /usr/local/include/ws2811.h /usr/local/lib/libws2811.a` returns both files.
 
 ### Build & run on the Pi
 
@@ -117,6 +129,8 @@ sudo ./bug_trapper --hw-test all             # button + ring + matrix self-test
 ### Cross-compile from Mac (optional)
 
 Requires zig as the C compiler (rpi-ws281x-go uses cgo).
+
+Cross-compile also needs `ws2811.h` + `libws2811.a` reachable by zig. Easiest path: run the build directly on the Pi (above) — cross-compiling ws281x cgo from macOS requires staging the Pi's `/usr/local/include` and `/usr/local/lib` locally and pointing `CGO_CFLAGS` / `CGO_LDFLAGS` at them. Skip cross-compile unless you've set that up.
 
 ```bash
 # 64-bit Pi OS (default for Zero 2 W):

@@ -76,11 +76,19 @@ func newMatrix() (*piMatrix, error) {
 		port.Close()
 		return nil, fmt.Errorf("matrix: set intensity: %w", err)
 	}
-	if err := dev.Clear(); err != nil {
+	m := &piMatrix{port: port, dev: dev}
+	if err := m.writeFrame(make([]byte, 8)); err != nil {
 		port.Close()
 		return nil, fmt.Errorf("matrix: clear: %w", err)
 	}
-	return &piMatrix{port: port, dev: dev}, nil
+	return m, nil
+}
+
+// writeFrame writes 8 raw bitmap rows to the matrix.
+// Bypasses dev.Write/Clear, which require a glyph table to be installed
+// (periph.io v3.7.4 panics with "index out of range [32]" otherwise).
+func (m *piMatrix) writeFrame(frame []byte) error {
+	return m.dev.WriteCascadedUnits([][]byte{frame})
 }
 
 func (m *piMatrix) StartChase(ctx context.Context) {
@@ -100,7 +108,7 @@ func (m *piMatrix) StartChase(ctx context.Context) {
 			m.running = false
 			m.stopCh = nil
 			m.mu.Unlock()
-			_ = m.dev.Clear()
+			_ = m.writeFrame(make([]byte, 8))
 		}()
 
 		ticker := time.NewTicker(chaseTickPeriod)
@@ -114,7 +122,7 @@ func (m *piMatrix) StartChase(ctx context.Context) {
 			}
 			c, r := edgePath[idx][0], edgePath[idx][1]
 			frame[r] = 1 << uint(7-c)
-			_ = m.dev.Write(frame[:])
+			_ = m.writeFrame(frame[:])
 			idx = (idx + 1) % len(edgePath)
 
 			select {
@@ -153,13 +161,13 @@ func (m *piMatrix) Stop() {
 
 func (m *piMatrix) FlashX(d time.Duration) {
 	m.Stop()
-	_ = m.dev.Write(xBitmap[:])
+	_ = m.writeFrame(xBitmap[:])
 	time.Sleep(d)
-	_ = m.dev.Clear()
+	_ = m.writeFrame(make([]byte, 8))
 }
 
 func (m *piMatrix) Close() error {
 	m.Stop()
-	_ = m.dev.Clear()
+	_ = m.writeFrame(make([]byte, 8))
 	return m.port.Close()
 }
