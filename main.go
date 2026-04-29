@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"time"
 
@@ -28,6 +29,14 @@ import (
 var defaultTemplate []byte
 
 const printerWidthDots = 384
+
+func init() {
+	// GoCV's preview window on macOS calls into Cocoa, which requires that
+	// NSWindow be created on the process's main OS thread. Without this
+	// lock, gocv.NewWindow crashes with "NSWindow should only be
+	// instantiated on the main thread!". Harmless on Linux.
+	runtime.LockOSThread()
+}
 
 func main() {
 	dbPath := flag.String("db-path", "sightings.db", "Path to SQLite database")
@@ -124,8 +133,10 @@ func run(dbPath, output string, template []byte, wantPreview, oneShot, noHW bool
 	}
 
 	for {
-		if err := waitTrigger(ctx, hw.Button); err != nil {
-			return nil
+		if !wantPreview {
+			if err := waitTrigger(ctx, hw.Button); err != nil {
+				return nil
+			}
 		}
 		if err := captureAndPrint(ctx, cam, hw, ident, db, output, template, wantPreview); err != nil {
 			fmt.Fprintf(os.Stderr, "iteration error: %v\n", err)
@@ -154,7 +165,7 @@ func captureAndPrint(
 	template []byte,
 	wantPreview bool,
 ) error {
-	photo, err := capturePhoto(cam, hw, wantPreview)
+	photo, err := capturePhoto(ctx, cam, hw, wantPreview)
 	if err != nil {
 		return fmt.Errorf("capturing photo: %w", err)
 	}
@@ -253,7 +264,7 @@ func writePNG(path string, img image.Image) error {
 	return png.Encode(f, img)
 }
 
-func capturePhoto(cam camera.Camera, hw *hardware.Devices, wantPreview bool) (image.Image, error) {
+func capturePhoto(ctx context.Context, cam camera.Camera, hw *hardware.Devices, wantPreview bool) (image.Image, error) {
 	if wantPreview {
 		if !camera.SupportsPreview() {
 			fmt.Println("    Preview not available in this build.")
@@ -262,7 +273,7 @@ func capturePhoto(cam camera.Camera, hw *hardware.Devices, wantPreview bool) (im
 			fmt.Println()
 			fmt.Println("    Falling back to direct capture...")
 		} else if previewCam, ok := cam.(camera.PreviewCamera); ok {
-			return capturePhotoWithPreview(previewCam, hw)
+			return capturePhotoWithPreview(ctx, previewCam, hw)
 		}
 	}
 
@@ -277,30 +288,39 @@ func capturePhoto(cam camera.Camera, hw *hardware.Devices, wantPreview bool) (im
 	return photo, nil
 }
 
-func capturePhotoWithPreview(previewCam camera.PreviewCamera, hw *hardware.Devices) (image.Image, error) {
-	step(2, "Showing camera preview...")
-	fmt.Println()
-	fmt.Println("    Camera preview window is open.")
-	fmt.Println("    Compose your shot, then press ENTER here to capture.")
-	fmt.Println()
-
+func capturePhotoWithPreview(ctx context.Context, previewCam camera.PreviewCamera, hw *hardware.Devices) (image.Image, error) {
+	step(2, "Opening camera preview...")
 	if err := previewCam.ShowPreview(); err != nil {
 		return nil, fmt.Errorf("opening preview: %w", err)
 	}
+	fmt.Println()
+	fmt.Println("    Camera preview window is open.")
+	fmt.Println("    Compose your shot, then press button or ENTER here to capture.")
+	fmt.Println()
 
-	capturedCh := make(chan struct{})
+	ensureStdinPump()
+	btnCtx, btnCancel := context.WithCancel(ctx)
+	defer btnCancel()
+	btnTrig := make(chan struct{}, 1)
 	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("    Press ENTER to take photo > ")
-		reader.ReadString('\n')
-		close(capturedCh)
+		if err := hw.Button.Wait(btnCtx); err == nil {
+			select {
+			case btnTrig <- struct{}{}:
+			default:
+			}
+		}
 	}()
 
 previewLoop:
 	for {
 		select {
-		case <-capturedCh:
+		case <-stdinLines:
 			break previewLoop
+		case <-btnTrig:
+			break previewLoop
+		case <-ctx.Done():
+			previewCam.StopPreview()
+			return nil, ctx.Err()
 		default:
 			if !previewCam.UpdatePreview() {
 				break previewLoop
