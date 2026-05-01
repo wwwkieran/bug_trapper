@@ -27,6 +27,7 @@ type Matrix interface {
 	StartChase(ctx context.Context)
 	Stop()
 	FlashX(d time.Duration)
+	FlashSmiley(d time.Duration)
 	Close() error
 }
 
@@ -82,4 +83,5 @@ type noopMatrix struct{}
 func (noopMatrix) StartChase(context.Context) {}
 func (noopMatrix) Stop()                      {}
 func (noopMatrix) FlashX(time.Duration)       {}
+func (noopMatrix) FlashSmiley(time.Duration)  {}
 func (noopMatrix) Close() error               { return nil }

@@ -138,9 +138,16 @@ func run(dbPath, output string, template []byte, wantPreview, oneShot, noHW bool
 				return nil
 			}
 		}
-		if err := captureAndPrint(ctx, cam, hw, ident, db, output, template, wantPreview); err != nil {
+		chaseCtx, chaseCancel := context.WithCancel(ctx)
+		hw.Matrix.StartChase(chaseCtx)
+		err := captureAndPrint(ctx, cam, hw, ident, db, output, template, wantPreview)
+		chaseCancel()
+		hw.Matrix.Stop()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "iteration error: %v\n", err)
 			hw.Matrix.FlashX(2 * time.Second)
+		} else {
+			hw.Matrix.FlashSmiley(2 * time.Second)
 		}
 		if oneShot {
 			return nil
@@ -169,10 +176,6 @@ func captureAndPrint(
 	if err != nil {
 		return fmt.Errorf("capturing photo: %w", err)
 	}
-
-	chaseCtx, chaseCancel := context.WithCancel(ctx)
-	defer func() { chaseCancel(); hw.Matrix.Stop() }()
-	hw.Matrix.StartChase(chaseCtx)
 
 	step(3, "Identifying organism via OpenAI... (this may take a moment)")
 	fmt.Println()

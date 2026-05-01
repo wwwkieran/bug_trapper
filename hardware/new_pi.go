@@ -21,17 +21,17 @@ func New() (*Devices, error) {
 	}
 
 	if b, err := newButton(); err != nil {
-		log.Printf("    skipped (button not connected): %v", err)
+		log.Printf("    button init failed: %v", err)
 	} else {
 		d.Button = b
 	}
 	if r, err := newRing(); err != nil {
-		log.Printf("    skipped (LED ring not connected): %v", err)
+		log.Printf("    LED ring init failed: %v", err)
 	} else {
 		d.Ring = r
 	}
 	if m, err := newMatrix(); err != nil {
-		log.Printf("    skipped (LED matrix not connected): %v", err)
+		log.Printf("    LED matrix init failed: %v", err)
 	} else {
 		d.Matrix = m
 	}

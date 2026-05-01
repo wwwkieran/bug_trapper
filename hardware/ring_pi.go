@@ -11,7 +11,7 @@ import (
 const (
 	ringGPIO       = 12
 	ringLEDCount   = 12
-	ringBrightness = 64
+	ringBrightness = 191
 )
 
 type piRing struct {

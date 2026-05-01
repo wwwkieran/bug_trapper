@@ -49,6 +49,17 @@ var xBitmap = [8]byte{
 	0b10000001,
 }
 
+var smileyBitmap = [8]byte{
+	0b00111100,
+	0b01000010,
+	0b10100101,
+	0b10000001,
+	0b10100101,
+	0b10011001,
+	0b01000010,
+	0b00111100,
+}
+
 type piMatrix struct {
 	port spi.PortCloser
 	dev  *max7219.Dev
@@ -120,8 +131,10 @@ func (m *piMatrix) StartChase(ctx context.Context) {
 			for i := range frame {
 				frame[i] = 0
 			}
-			c, r := edgePath[idx][0], edgePath[idx][1]
-			frame[r] = 1 << uint(7-c)
+			for offset := 0; offset < 3; offset++ {
+				p := edgePath[(idx+offset)%len(edgePath)]
+				frame[p[1]] |= 1 << uint(7-p[0])
+			}
 			_ = m.writeFrame(frame[:])
 			idx = (idx + 1) % len(edgePath)
 
@@ -162,6 +175,13 @@ func (m *piMatrix) Stop() {
 func (m *piMatrix) FlashX(d time.Duration) {
 	m.Stop()
 	_ = m.writeFrame(xBitmap[:])
+	time.Sleep(d)
+	_ = m.writeFrame(make([]byte, 8))
+}
+
+func (m *piMatrix) FlashSmiley(d time.Duration) {
+	m.Stop()
+	_ = m.writeFrame(smileyBitmap[:])
 	time.Sleep(d)
 	_ = m.writeFrame(make([]byte, 8))
 }

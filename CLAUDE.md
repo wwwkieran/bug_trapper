@@ -145,4 +145,5 @@ CGO_ENABLED=1 CC="zig cc -target arm-linux-gnueabihf" \
 ### Notes
 
 - Ring brightness defaults to 64 (~25%) to stay within the Zero 2 W's 5V budget. For full brightness, power the strip from a separate 5V supply with shared ground.
-- If a peripheral fails to initialize (not connected, wiring fault), startup logs `skipped (X not connected)` and the rest of the loop keeps working.
+- If a peripheral fails to initialize, startup logs `<peripheral> init failed: <err>` and the rest of the loop keeps working.
+- The ring uses GPIO12 (PWM0). The `snd_bcm2835` kernel module also claims PWM0, so it must not be loaded — `dtparam=audio=off` alone is sometimes ignored. To be safe, also blacklist the module: `echo "blacklist snd_bcm2835" | sudo tee /etc/modprobe.d/blacklist-snd-bcm2835.conf && sudo reboot`. Verify after reboot with `lsmod | grep snd_bcm2835` (must be empty).
