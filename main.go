@@ -208,6 +208,7 @@ func captureAndPrint(
 		"name":        result.Name,
 		"description": result.Description,
 		"N":           fmt.Sprintf("%d", count),
+		"xp":          fmt.Sprintf("%d", count*10),
 		"date":        formatDate(time.Now()),
 	}
 	rendered, err := svgreceipt.Render(template, vars, illustration, printerWidthDots)

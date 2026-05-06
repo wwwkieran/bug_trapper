@@ -12,8 +12,11 @@
   <!-- Divider under banner -->
   <rect x="8" y="84" width="368" height="2" fill="black"/>
 
-  <!-- Organism name (large) -->
-  <text x="192" y="140" text-anchor="middle" font-family="monospace" font-size="32" font-weight="bold" fill="black">{{name}}</text>
+  <!-- Organism name (large). data-fit-width centers inside the box and
+       shrinks font-size if the name would overflow. data-char-width=0.6
+       matches monospace; the x below is treated as the fit-box left edge. -->
+  <text x="16" y="140" font-family="monospace" font-size="32" font-weight="bold" fill="black"
+        data-fit-width="352" data-char-width="0.6">{{name}}</text>
 
   <!-- Description: data-wrap=N wraps to N chars per line; data-line-height
        sets row spacing in SVG units. -->
