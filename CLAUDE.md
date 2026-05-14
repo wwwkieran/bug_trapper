@@ -76,18 +76,18 @@ Build with `-tags pi` to enable GPIO peripherals: a button (capture trigger), a 
 
 ### Wiring
 
-| Device         | Function | Pi pin | BCM     | Notes |
-|----------------|----------|--------|---------|-------|
-| Push button    | Signal   | 36     | GPIO16  | active-low, internal pull-up |
-| Push button    | GND      | 20     | —       | |
-| WS2812B ring   | Data     | 32     | GPIO12  | PWM0 |
-| WS2812B ring   | 5V       | 2      | —       | |
-| WS2812B ring   | GND      | 6      | —       | |
-| MAX7219 matrix | DIN      | 38     | GPIO20  | SPI1 MOSI |
-| MAX7219 matrix | CLK      | 40     | GPIO21  | SPI1 SCLK |
-| MAX7219 matrix | CS       | 12     | GPIO18  | SPI1 CE0 |
-| MAX7219 matrix | 5V       | 4      | —       | |
-| MAX7219 matrix | GND      | 14     | —       | |
+| Device          | Function | Pi pin | BCM     | Notes |
+|-----------------|----------|--------|---------|-------|
+| Push button     | Signal   | 36     | GPIO16  | active-low, internal pull-up |
+| Push button     | GND      | 34     | —       | |
+| External 5V PSU | +5V      | 2      | —       | back-powers Pi; shared 5V rail with ring |
+| External 5V PSU | GND      | 20     | —       | shared ground |
+| WS2812B ring    | Data     | 32     | GPIO12  | PWM0 |
+| MAX7219 matrix  | DIN      | 38     | GPIO20  | SPI1 MOSI |
+| MAX7219 matrix  | CLK      | 40     | GPIO21  | SPI1 SCLK |
+| MAX7219 matrix  | CS       | 12     | GPIO18  | SPI1 CE0 |
+| MAX7219 matrix  | 5V       | 4      | —       | |
+| MAX7219 matrix  | GND      | 14     | —       | |
 
 ### Pi setup (one-time)
 
