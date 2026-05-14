@@ -8,15 +8,16 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"strings"
 )
 
 type OrganismResult struct {
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	IllustrationURL string `json:"illustration_url,omitempty"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	Illustration image.Image `json:"-"`
 }
 
 type Identifier interface {
@@ -59,11 +60,11 @@ func (o *OpenAIIdentifier) Identify(ctx context.Context, img image.Image) (*Orga
 	}
 
 	// Step 2: Generate illustration
-	illustrationURL, err := o.generateIllustration(ctx, result.Name)
+	illustration, err := o.generateIllustration(ctx, result.Name)
 	if err != nil {
 		return nil, fmt.Errorf("generating illustration: %w", err)
 	}
-	result.IllustrationURL = illustrationURL
+	result.Illustration = illustration
 
 	return result, nil
 }
@@ -104,7 +105,7 @@ Only respond with the JSON, no other text.`,
 	return parseIdentifyResponse(respBody)
 }
 
-func (o *OpenAIIdentifier) generateIllustration(ctx context.Context, organismName string) (string, error) {
+func (o *OpenAIIdentifier) generateIllustration(ctx context.Context, organismName string) (image.Image, error) {
 	body := map[string]interface{}{
 		"model":  "gpt-image-1",
 		"prompt": fmt.Sprintf("A simple black and white illustration of a %s. Black-and-white minimalist children’s doodle bug illustration.\nDraw a small, cute bug in a very simple hand-drawn line-art style on a plain white background. Use only solid black ink lines, no color, no shading, and no gray tones. The drawing should look like it was made with a thick felt-tip marker or crayon: slightly uneven, wobbly, imperfect lines with rounded ends and a handmade texture. Keep the bug centered with lots of empty white space around it.\nThe bug should be simplified and cartoon-like rather than realistic. Use basic rounded shapes for the body, head, wings, shell, legs, and antennae. Make the features cute and friendly: tiny dot eyes, a small smile or simple face, short curved antennae, stubby legs, and soft rounded proportions. Avoid sharp details, realistic anatomy, complex textures, or high-detail rendering.\nThe line weight should be bold but playful, with irregular thickness and slightly shaky contours. Interior details should be minimal: a few simple stripes, spots, wing lines, shell marks, or body segments. The overall look should resemble a childlike sketch, casual notebook doodle, simple tattoo flash, or handmade sticker design. The image should be clean, high contrast, and suitable for black-and-white printing.\nNegative prompt:\nNo color, no gradients, no watercolor, no realistic insect anatomy, no detailed legs, no shadows, no 3D rendering, no background scene, no plants, no textures except slight hand-drawn line wobble, no complex patterns, no thin technical linework, no photorealism.", organismName),
@@ -114,7 +115,7 @@ func (o *OpenAIIdentifier) generateIllustration(ctx context.Context, organismNam
 
 	respBody, err := o.doRequest(ctx, "/images/generations", body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	return parseImageResponse(respBody)
@@ -196,22 +197,32 @@ func parseIdentifyResponse(body []byte) (*OrganismResult, error) {
 	return &result, nil
 }
 
-func parseImageResponse(body []byte) (string, error) {
+func parseImageResponse(body []byte) (image.Image, error) {
 	var resp struct {
 		Data []struct {
-			URL string `json:"url"`
+			B64JSON string `json:"b64_json"`
 		} `json:"data"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("parsing image response: %w", err)
+		return nil, fmt.Errorf("parsing image response: %w", err)
 	}
 
-	if len(resp.Data) == 0 {
-		return "", fmt.Errorf("no images in response")
+	if len(resp.Data) == 0 || resp.Data[0].B64JSON == "" {
+		return nil, fmt.Errorf("no image data in response")
 	}
 
-	return resp.Data[0].URL, nil
+	imgBytes, err := base64.StdEncoding.DecodeString(resp.Data[0].B64JSON)
+	if err != nil {
+		return nil, fmt.Errorf("decoding base64 image: %w", err)
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(imgBytes))
+	if err != nil {
+		return nil, fmt.Errorf("decoding image: %w", err)
+	}
+
+	return img, nil
 }
 
 func stripCodeFences(s string) string {

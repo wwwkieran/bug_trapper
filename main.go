@@ -10,7 +10,6 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -185,13 +184,7 @@ func captureAndPrint(
 	}
 	fmt.Printf("    Found: %s\n", result.Name)
 
-	step(4, "Downloading illustration...")
-	fmt.Println()
-	illustration, err := downloadImage(result.IllustrationURL)
-	if err != nil {
-		return fmt.Errorf("downloading illustration: %w", err)
-	}
-	done()
+	illustration := result.Illustration
 
 	step(5, "Recording sighting in database...")
 	count, err := db.RecordSighting(ctx, result.Name)
@@ -455,22 +448,4 @@ func step(n int, msg string) {
 
 func done() {
 	fmt.Println(" done!")
-}
-
-func downloadImage(url string) (image.Image, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download returned status %d", resp.StatusCode)
-	}
-
-	img, _, err := image.Decode(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("decoding image: %w", err)
-	}
-	return img, nil
 }

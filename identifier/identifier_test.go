@@ -1,16 +1,26 @@
 package identifier
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func testImageBase64() string {
+	img := testImage()
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
 
 func testImage() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
@@ -63,7 +73,7 @@ func TestIdentifyOrganism(t *testing.T) {
 
 			resp := map[string]interface{}{
 				"data": []map[string]interface{}{
-					{"url": "https://example.com/butterfly.png"},
+					{"b64_json": testImageBase64()},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -87,8 +97,8 @@ func TestIdentifyOrganism(t *testing.T) {
 	if result.Description == "" {
 		t.Error("expected non-empty description")
 	}
-	if result.IllustrationURL != "https://example.com/butterfly.png" {
-		t.Errorf("expected illustration URL, got %q", result.IllustrationURL)
+	if result.Illustration == nil {
+		t.Error("expected non-nil illustration")
 	}
 }
 
@@ -108,7 +118,7 @@ func TestIdentifyWithCodeFences(t *testing.T) {
 		} else if r.URL.Path == "/images/generations" {
 			resp := map[string]interface{}{
 				"data": []map[string]interface{}{
-					{"url": "https://example.com/ladybug.png"},
+					{"b64_json": testImageBase64()},
 				},
 			}
 			json.NewEncoder(w).Encode(resp)
@@ -168,13 +178,14 @@ func TestParseIdentifyResponse(t *testing.T) {
 }
 
 func TestParseImageResponse(t *testing.T) {
-	body := `{"data":[{"url":"https://example.com/img.png"}]}`
-	url, err := parseImageResponse([]byte(body))
+	b64 := testImageBase64()
+	body := `{"data":[{"b64_json":"` + b64 + `"}]}`
+	img, err := parseImageResponse([]byte(body))
 	if err != nil {
 		t.Fatalf("parseImageResponse failed: %v", err)
 	}
-	if url != "https://example.com/img.png" {
-		t.Errorf("expected URL, got %q", url)
+	if img == nil {
+		t.Error("expected non-nil image")
 	}
 }
 
