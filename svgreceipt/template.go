@@ -192,7 +192,7 @@ func Prepare(svgBytes []byte, vars map[string]string) (*Prepared, error) {
 // [X, X+W] and shrinks font-size if needed so the text fits. Applied
 // per-run; ignored when data-wrap is also present.
 func emitText(enc *xml.Encoder, start xml.StartElement, runs []textRun, vars map[string]string) error {
-	const fitDataAttrs = "data-wrap,data-line-height,data-fit-width,data-fit-x,data-char-width"
+	const fitDataAttrs = "data-wrap,data-line-height,data-fit-width,data-fit-x,data-char-width,data-fit-anchor"
 	cleanAttrs := stripAttrs(start.Attr, strings.Split(fitDataAttrs, ",")...)
 
 	if attr(start.Attr, "data-wrap") != "" {
@@ -282,10 +282,16 @@ func applyFit(runAttrs, srcAttrs []xml.Attr, content string, fitW float64) []xml
 		}
 	}
 
-	// Center inside the fit box.
-	cx := fitX + fitW/2
-	runAttrs = setAttr(runAttrs, "x", fmt.Sprintf("%g", cx))
-	runAttrs = setAttr(runAttrs, "text-anchor", "middle")
+	// Position inside the fit box.
+	anchor := attr(srcAttrs, "data-fit-anchor")
+	if anchor == "start" {
+		runAttrs = setAttr(runAttrs, "x", fmt.Sprintf("%g", fitX))
+		runAttrs = setAttr(runAttrs, "text-anchor", "start")
+	} else {
+		cx := fitX + fitW/2
+		runAttrs = setAttr(runAttrs, "x", fmt.Sprintf("%g", cx))
+		runAttrs = setAttr(runAttrs, "text-anchor", "middle")
+	}
 	return runAttrs
 }
 

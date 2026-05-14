@@ -15,9 +15,10 @@ import (
 )
 
 type OrganismResult struct {
-	Name         string      `json:"name"`
-	Description  string      `json:"description"`
-	Illustration image.Image `json:"-"`
+	Name           string      `json:"name"`
+	ScientificName string      `json:"scientific_name"`
+	Description    string      `json:"description"`
+	Illustration   image.Image `json:"-"`
 }
 
 type Identifier interface {
@@ -81,7 +82,7 @@ func (o *OpenAIIdentifier) identifyOrganism(ctx context.Context, imageBase64 str
 						"text": `Identify the organism in this photo. Give a short description of the organism for kids.
 
 Respond in JSON format with exactly these fields:
-{"name": "Common Name", "description": "A fun, kid-friendly description in 1-2 sentences."}
+{"name": "Common Name", "scientific_name": "Genus species", "description": "A fun, kid-friendly description in 1-2 sentences."}
 
 Only respond with the JSON, no other text.`,
 					},

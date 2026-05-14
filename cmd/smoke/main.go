@@ -31,7 +31,7 @@ func main() {
 		out      string
 		count    string
 	}{
-		{"assets/card.svg", "card-smoke.png", "3"},
+		{"assets/card2.svg", "card-smoke.png", "3"},
 		{"assets/receipt.svg", "receipt-smoke.png", "3"},
 	}
 
@@ -41,13 +41,14 @@ func main() {
 		xp = v
 	}
 	vars := map[string]string{
-		"name":        name,
-		"description": "A small flying insect that pollinates flowers and produces honey. Found across most of the world.",
-		"N":           "3",
-		"xp":          xp,
-		"date":        "April 29th, 2026",
-		"count":       "3",
-		"timestamp":   "2026-04-29 12:34:56",
+		"name":            name,
+		"scientific_name": "Apis mellifera",
+		"description":     "A small flying insect that pollinates flowers and produces honey. Found across most of the world.",
+		"N":               "3",
+		"xp":              xp,
+		"date":            "April 29th, 2026",
+		"count":           "3",
+		"timestamp":       "2026-04-29 12:34:56",
 	}
 
 	for _, c := range cards {

@@ -1,0 +1,9 @@
+<svg width="384" height="537" viewBox="0 0 384 537" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="384" height="537" fill="white"/>
+<rect id="illustration" x="0" y="122" width="384" height="233" fill="#F0F0F0" stroke="#CCCCCC" stroke-width="1"/>
+<text id="{{name}}" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="32" font-weight="bold" letter-spacing="0em" data-fit-width="340" data-fit-x="22" data-char-width="0.55" data-fit-anchor="start"><tspan x="22" y="44.1364">{{name}}</tspan></text>
+<text id="{{scientific_name}}" fill="#555555" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="15" font-weight="300" font-style="italic" letter-spacing="0em"><tspan x="22" y="81.4545">{{scientific_name}}</tspan></text>
+<text id="{{description}}" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" font-weight="300" letter-spacing="0em" data-wrap="38" data-line-height="20"><tspan x="22" y="396.545">{{description}}</tspan></text>
+<text id="{{date}}" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="15" font-weight="200" letter-spacing="0em"><tspan x="22" y="108.455">{{date}}</tspan></text>
+<text id="You’ve found this {{N}} times!" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="20" font-style="italic" font-weight="300" letter-spacing="0em"><tspan x="56.2754" y="520.273">You’ve found this {{N}} times!</tspan></text>
+</svg>

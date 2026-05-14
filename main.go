@@ -24,7 +24,7 @@ import (
 	"bug_trapper/svgreceipt"
 )
 
-//go:embed assets/card.svg
+//go:embed assets/card2.svg
 var defaultTemplate []byte
 
 const printerWidthDots = 384
@@ -198,11 +198,12 @@ func captureAndPrint(
 
 	step(6, "Rendering receipt SVG...")
 	vars := map[string]string{
-		"name":        result.Name,
-		"description": result.Description,
-		"N":           fmt.Sprintf("%d", count),
-		"xp":          fmt.Sprintf("%d", count*10),
-		"date":        formatDate(time.Now()),
+		"name":            result.Name,
+		"scientific_name": result.ScientificName,
+		"description":     result.Description,
+		"N":               fmt.Sprintf("%d", count),
+		"xp":              fmt.Sprintf("%d", count*10),
+		"date":            formatDate(time.Now()),
 	}
 	rendered, err := svgreceipt.Render(template, vars, illustration, printerWidthDots)
 	if err != nil {
