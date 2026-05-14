@@ -3,7 +3,7 @@
 <rect width="384" height="537" fill="white"/>
 <rect id="illustration" x="33" y="131" width="317" height="191" fill="url(#pattern0_78_39)"/>
 <rect id="Rectangle 1" x="9" y="9" width="366" height="519" rx="11" stroke="#8D8D8D" stroke-width="18"/>
-<text id="{{name}}" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="32" font-weight="bold" letter-spacing="0em"><tspan x="60.9219" y="54.1364">{{name}}</tspan></text>
+<text id="{{name}}" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="32" font-weight="bold" letter-spacing="0em" data-fit-width="218" data-fit-x="21" data-char-width="0.55"><tspan x="60.9219" y="54.1364">{{name}}</tspan></text>
 <text id="Boston, MA" fill="#5D5D5D" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="15" font-weight="300" letter-spacing="0em"><tspan x="21" y="85.4545">Boston, MA</tspan></text>
 <text id="{{description}}" fill="#5D5D5D" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="15" font-weight="300" letter-spacing="0em" data-wrap="40" data-line-height="20"><tspan x="38" y="378.455">{{description}}</tspan></text>
 <text id="{{date}}" fill="#5D5D5D" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="15" font-weight="300" letter-spacing="0em"><tspan x="21" y="111.455">{{date}}</tspan></text>
@@ -13,7 +13,7 @@
 <path id="Vector 1" d="M267 18L239 67.5H17.5" stroke="#8D8D8D" stroke-width="2"/>
 <path id="Vector 2" d="M239 68L267 117.5" stroke="#8D8D8D" stroke-width="2"/>
 <path id="Vector 3" d="M266.5 117H366" stroke="#8D8D8D" stroke-width="2"/>
-<text id="15" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="64" letter-spacing="0em"><tspan x="274.156" y="98.7727">15</tspan></text>
+<text id="{{xp}}" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="64" letter-spacing="0em" data-fit-width="100" data-fit-x="265" data-char-width="0.55"><tspan x="274.156" y="98.7727">{{xp}}</tspan></text>
 <path id="Vector 4" d="M18 93L253 93" stroke="#8D8D8D"/>
 </g>
 <defs>

@@ -186,8 +186,14 @@ func Prepare(svgBytes []byte, vars map[string]string) (*Prepared, error) {
 // emitted as its own <text> element with the run's x/y overriding the
 // parent's (this flattens <tspan> children into siblings, which is what
 // tdewolff/canvas needs since it doesn't render <tspan>).
+//
+// data-fit-width="W" (with optional data-fit-x="X" and
+// data-char-width="R") centers the text horizontally inside the box
+// [X, X+W] and shrinks font-size if needed so the text fits. Applied
+// per-run; ignored when data-wrap is also present.
 func emitText(enc *xml.Encoder, start xml.StartElement, runs []textRun, vars map[string]string) error {
-	cleanAttrs := stripAttrs(start.Attr, "data-wrap", "data-line-height")
+	const fitDataAttrs = "data-wrap,data-line-height,data-fit-width,data-fit-x,data-char-width"
+	cleanAttrs := stripAttrs(start.Attr, strings.Split(fitDataAttrs, ",")...)
 
 	if attr(start.Attr, "data-wrap") != "" {
 		var joined strings.Builder
@@ -214,7 +220,10 @@ func emitText(enc *xml.Encoder, start xml.StartElement, runs []textRun, vars map
 		return nil
 	}
 
+	fitW, hasFit := parseFloat(attr(start.Attr, "data-fit-width"))
+
 	for _, r := range runs {
+		content := substText(r.content, vars)
 		runStart := xml.StartElement{Name: start.Name, Attr: copyAttrs(cleanAttrs)}
 		if r.x != "" {
 			runStart.Attr = setAttr(runStart.Attr, "x", r.x)
@@ -222,10 +231,13 @@ func emitText(enc *xml.Encoder, start xml.StartElement, runs []textRun, vars map
 		if r.y != "" {
 			runStart.Attr = setAttr(runStart.Attr, "y", r.y)
 		}
+		if hasFit && fitW > 0 {
+			runStart.Attr = applyFit(runStart.Attr, start.Attr, content, fitW)
+		}
 		if err := enc.EncodeToken(runStart); err != nil {
 			return err
 		}
-		if err := enc.EncodeToken(xml.CharData(substText(r.content, vars))); err != nil {
+		if err := enc.EncodeToken(xml.CharData(content)); err != nil {
 			return err
 		}
 		if err := enc.EncodeToken(xml.EndElement{Name: start.Name}); err != nil {
@@ -233,6 +245,48 @@ func emitText(enc *xml.Encoder, start xml.StartElement, runs []textRun, vars map
 		}
 	}
 	return nil
+}
+
+// applyFit centers text inside [fitX, fitX+fitW] (defaults fitX to the
+// element's current x) and shrinks font-size if the estimated rendered
+// width exceeds fitW. Width is estimated as
+// len(content) * font-size * charWidth, where charWidth defaults to 0.6
+// (a safe upper bound for Inter and most monospace fonts) and can be
+// overridden per element via data-char-width.
+func applyFit(runAttrs, srcAttrs []xml.Attr, content string, fitW float64) []xml.Attr {
+	fitX, hasFitX := parseFloat(attr(srcAttrs, "data-fit-x"))
+	if !hasFitX {
+		// Default: keep the existing x as the left edge of the fit box.
+		fitX, _ = parseFloat(attr(runAttrs, "x"))
+	}
+
+	charWidth, ok := parseFloat(attr(srcAttrs, "data-char-width"))
+	if !ok {
+		charWidth = 0.6
+	}
+
+	fontSize, ok := parseFloat(attr(runAttrs, "font-size"))
+	if !ok {
+		fontSize, _ = parseFloat(attr(srcAttrs, "font-size"))
+	}
+	if fontSize <= 0 {
+		fontSize = 16
+	}
+
+	n := float64(len([]rune(strings.TrimSpace(content))))
+	if n > 0 && charWidth > 0 {
+		estW := n * fontSize * charWidth
+		if estW > fitW {
+			fontSize = fitW / (n * charWidth)
+			runAttrs = setAttr(runAttrs, "font-size", fmt.Sprintf("%g", fontSize))
+		}
+	}
+
+	// Center inside the fit box.
+	cx := fitX + fitW/2
+	runAttrs = setAttr(runAttrs, "x", fmt.Sprintf("%g", cx))
+	runAttrs = setAttr(runAttrs, "text-anchor", "middle")
+	return runAttrs
 }
 
 func emitWrapped(enc *xml.Encoder, start xml.StartElement, content string) error {
@@ -252,7 +306,9 @@ func emitWrapped(enc *xml.Encoder, start xml.StartElement, content string) error
 
 	// Strip our internal data-* attrs before emitting so the SVG parser
 	// doesn't see noise.
-	cleanAttrs := stripAttrs(start.Attr, "data-wrap", "data-line-height")
+	cleanAttrs := stripAttrs(start.Attr,
+		"data-wrap", "data-line-height",
+		"data-fit-width", "data-fit-x", "data-char-width")
 
 	lines := wrapText(strings.TrimSpace(content), width)
 	if len(lines) == 0 {
